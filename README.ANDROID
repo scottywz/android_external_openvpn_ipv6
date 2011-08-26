@@ -1,9 +1,8 @@
-
 2011-08-26 Updated to OpenVPN 2.2.1 with the IPv6 payload patch by Gert Döring
 	   http://www.greenie.net/ipv6/openvpn.html
 	   http://uploads.srwz.us/openvpn-2.2.1-ipv6-20110825-1.patch.gz
 	   ./configure --enable-password-save --enable-iproute2 --disable-pkcs11 --with-ifconfig-path=/system/bin/ifconfig --with-iproute-path=/system/xbin/ip --with-route-path=/system/bin/route
-	   iproute2 is necessary for IPv6 to work because BusyBox's ifconfig chokes on adding IPv6 addresses
+	   iproute2 is necessary for IPv6 to work because CM's ifconfig chokes on adding IPv6 addresses
 	   Scott Zeid <s@srwz.us>
 
 2010-01-26 Updated to OpenVPN 2.1.1
