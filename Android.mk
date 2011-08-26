@@ -1,10 +1,12 @@
 LOCAL_PATH:= $(call my-dir)
 
-#on a 32bit maschine run ./configure --enable-password-save --disable-pkcs11 --with-ifconfig-path=/system/bin/ifconfig --with-route-path=/system/bin/route
-#from generated Makefile copy variable contents of openvpn_SOURCES to common_SRC_FILES
-# append missing.c to the end of the list
-# missing.c defines undefined functions.
-# in tun.c replace /dev/net/tun with /dev/tun
+# On a 32-bit machine:
+#  * Run `./configure --enable-iproute2 --enable-password-save --disable-pkcs11 --with-ifconfig-path=/system/bin/ifconfig --with-iproute-path=/system/xbin/ip --with-route-path=/system/bin/route`
+#  * From the generated Makefile, copy the contents of the openvpn_SOURCES variable to common_SRC_FILES
+#  * Append missing.c to the end of the list from the above variable
+#     * missing.c defines undefined functions.
+#  * ** Run `make configure.h`! **
+#  * In tun.c replace /dev/net/tun with /dev/tun if necessary
 
 common_SRC_FILES:= \
         base64.c base64.h \
@@ -69,7 +71,6 @@ common_SRC_FILES:= \
 	ssl.c ssl.h \
 	status.c status.h \
 	syshead.h \
-	thread.c thread.h \
 	tun.c tun.h \
 	win32.h win32.c \
 	cryptoapi.h cryptoapi.c \

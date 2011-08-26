@@ -417,6 +417,7 @@ init_proxy_dowork (struct context *c)
     {
       c->c1.socks_proxy = socks_proxy_new (c->options.ce.socks_proxy_server,
 					   c->options.ce.socks_proxy_port,
+					   c->options.ce.socks_proxy_authfile,
 					   c->options.ce.socks_proxy_retry,
 					   c->options.auto_proxy_info);
       if (c->c1.socks_proxy)
@@ -615,7 +616,7 @@ init_static (void)
 #ifdef STATUS_PRINTF_TEST
   {
     struct gc_arena gc = gc_new ();
-    const char *tmp_file = create_temp_filename ("/tmp", "foo", &gc);
+    const char *tmp_file = create_temp_file ("/tmp", "foo", &gc);
     struct status_output *so = status_open (tmp_file, 0, -1, NULL, STATUS_OUTPUT_WRITE);
     status_printf (so, "%s", "foo");
     status_printf (so, "%s", "bar");
@@ -717,8 +718,6 @@ init_static (void)
 void
 uninit_static (void)
 {
-  openvpn_thread_cleanup ();
-
 #ifdef USE_CRYPTO
   free_ssl_lib ();
 #endif
@@ -844,7 +843,7 @@ do_persist_tuntap (const struct options *options)
 	msg (M_FATAL|M_OPTERR,
 	     "options --mktun or --rmtun should only be used together with --dev");
       tuncfg (options->dev, options->dev_type, options->dev_node,
-	      options->tun_ipv6, options->persist_mode,
+	      options->persist_mode,
 	      options->username, options->groupname, &options->tuntap_options);
       if (options->persist_mode && options->lladdr)
         set_lladdr(options->dev, options->lladdr, NULL);
@@ -1067,6 +1066,8 @@ do_alloc_route_list (struct context *c)
 {
   if (c->options.routes && !c->c1.route_list)
     c->c1.route_list = new_route_list (c->options.max_routes, &c->gc);
+  if (c->options.routes_ipv6 && !c->c1.route_ipv6_list)
+    c->c1.route_ipv6_list = new_route_ipv6_list (c->options.max_routes, &c->gc);
 }
 
 
@@ -1108,6 +1109,45 @@ do_init_route_list (const struct options *options,
       setenv_routes (es, route_list);
     }
 }
+
+static void
+do_init_route_ipv6_list (const struct options *options,
+		    struct route_ipv6_list *route_ipv6_list,
+		    bool fatal,
+		    struct env_set *es)
+{
+  const char *gw = NULL;
+  int dev = dev_type_enum (options->dev, options->dev_type);
+  int metric = 0;
+
+  if (dev != DEV_TYPE_TUN )
+    msg( M_WARN, "IPv6 routes on TAP devices are going to fail on some platforms (need gateway spec)" );	/* TODO-GERT */
+
+  gw = options->ifconfig_ipv6_remote;		/* default GW = remote end */
+#if 0					/* not yet done for IPv6 - TODO!*/
+  if ( options->route_ipv6_default_gateway )		/* override? */
+    gw = options->route_ipv6_default_gateway;
+#endif
+
+  if (options->route_default_metric)
+    metric = options->route_default_metric;
+
+  if (!init_route_ipv6_list (route_ipv6_list,
+			options->routes_ipv6,
+			gw,
+			metric,
+			es))
+    {
+      if (fatal)
+	openvpn_exit (OPENVPN_EXIT_STATUS_ERROR);	/* exit point */
+    }
+  else
+    {
+      /* copy routes to environment */
+      setenv_routes_ipv6 (es, route_ipv6_list);
+    }
+}
+
 
 /*
  * Called after all initialization has been completed.
@@ -1173,12 +1213,13 @@ initialization_sequence_completed (struct context *c, const unsigned int flags)
 void
 do_route (const struct options *options,
 	  struct route_list *route_list,
+	  struct route_ipv6_list *route_ipv6_list,
 	  const struct tuntap *tt,
 	  const struct plugin_list *plugins,
 	  struct env_set *es)
 {
-  if (!options->route_noexec && route_list)
-    add_routes (route_list, tt, ROUTE_OPTION_FLAGS (options), es);
+  if (!options->route_noexec && ( route_list || route_ipv6_list ) )
+    add_routes (route_list, route_ipv6_list, tt, ROUTE_OPTION_FLAGS (options), es);
 
   if (plugin_defined (plugins, OPENVPN_PLUGIN_ROUTE_UP))
     {
@@ -1191,7 +1232,7 @@ do_route (const struct options *options,
       struct argv argv = argv_new ();
       setenv_str (es, "script_type", "route-up");
       argv_printf (&argv, "%sc", options->route_script);
-      openvpn_execve_check (&argv, es, S_SCRIPT, "Route script failed");
+      openvpn_run_script (&argv, es, 0, "--route-up");
       argv_reset (&argv);
     }
 
@@ -1235,10 +1276,15 @@ do_init_tun (struct context *c)
 			   c->options.topology,
 			   c->options.ifconfig_local,
 			   c->options.ifconfig_remote_netmask,
+			   c->options.ifconfig_ipv6_local,
+			   c->options.ifconfig_ipv6_remote,
 			   addr_host (&c->c1.link_socket_addr.local),
 			   addr_host (&c->c1.link_socket_addr.remote),
 			   !c->options.ifconfig_nowarn,
 			   c->c2.es);
+
+  /* flag tunnel for IPv6 config if --tun-ipv6 is set */
+  c->c1.tuntap->ipv6 = c->options.tun_ipv6;
 
   init_tun_post (c->c1.tuntap,
 		 &c->c2.frame,
@@ -1271,6 +1317,8 @@ do_open_tun (struct context *c)
       /* parse and resolve the route option list */
       if (c->options.routes && c->c1.route_list && c->c2.link_socket)
 	do_init_route_list (&c->options, c->c1.route_list, &c->c2.link_socket->info, false, c->c2.es);
+      if (c->options.routes_ipv6 && c->c1.route_ipv6_list )
+	do_init_route_ipv6_list (&c->options, c->c1.route_ipv6_list, false, c->c2.es);
 
       /* do ifconfig */
       if (!c->options.ifconfig_noexec
@@ -1287,7 +1335,7 @@ do_open_tun (struct context *c)
 
       /* open the tun device */
       open_tun (c->options.dev, c->options.dev_type, c->options.dev_node,
-		c->options.tun_ipv6, c->c1.tuntap);
+		c->c1.tuntap);
 
       /* set the hardware address */
       if (c->options.lladdr)
@@ -1316,7 +1364,8 @@ do_open_tun (struct context *c)
 
       /* possibly add routes */
       if (!c->options.route_delay_defined)
-	do_route (&c->options, c->c1.route_list, c->c1.tuntap, c->plugins, c->c2.es);
+	do_route (&c->options, c->c1.route_list, c->c1.route_ipv6_list,
+		  c->c1.tuntap, c->plugins, c->c2.es);
 
       /*
        * Did tun/tap driver give us an MTU?
@@ -1390,8 +1439,9 @@ do_close_tun (struct context *c, bool force)
 #endif
 
 	  /* delete any routes we added */
-	  if (c->c1.route_list)
-	    delete_routes (c->c1.route_list, c->c1.tuntap, ROUTE_OPTION_FLAGS (&c->options), c->c2.es);
+	  if (c->c1.route_list || c->c1.route_ipv6_list )
+	    delete_routes (c->c1.route_list, c->c1.route_ipv6_list,
+			   c->c1.tuntap, ROUTE_OPTION_FLAGS (&c->options), c->c2.es);
 
 	  /* actually close tun/tap device based on --down-pre flag */
 	  if (!c->options.down_pre)
@@ -2024,6 +2074,7 @@ do_init_crypto_tls (struct context *c, const unsigned int flags)
 #endif
 
   to.verify_command = options->tls_verify;
+  to.verify_export_cert = options->tls_export_cert;
   to.verify_x509name = options->tls_remote;
   to.crl_file = options->crl_file;
   to.ns_cert_type = options->ns_cert_type;
@@ -3503,23 +3554,6 @@ close_context (struct context *c, int sig, unsigned int flags)
 
 #ifdef USE_CRYPTO
 
-static void
-test_malloc (void)
-{
-  int i, j;
-  msg (M_INFO, "Multithreaded malloc test...");
-  for (i = 0; i < 25; ++i)
-    {
-      struct gc_arena gc = gc_new ();
-      const int limit = get_random () & 0x03FF;
-      for (j = 0; j < limit; ++j)
-	{
-	  gc_malloc (get_random () & 0x03FF, false, &gc);
-	}
-      gc_free (&gc);
-    }
-}
-
 /*
  * Do a loopback test
  * on the crypto subsystem.
@@ -3529,50 +3563,19 @@ test_crypto_thread (void *arg)
 {
   struct context *c = (struct context *) arg;
   const struct options *options = &c->options;
-#if defined(USE_PTHREAD)
-  struct context *child = NULL;
-  openvpn_thread_t child_id = 0;
-#endif
 
   ASSERT (options->test_crypto);
   init_verb_mute (c, IVM_LEVEL_1);
   context_init_1 (c);
   do_init_crypto_static (c, 0);
 
-#if defined(USE_PTHREAD)
-  {
-    if (c->first_time && options->n_threads > 1)
-      {
-	if (options->n_threads > 2)
-	  msg (M_FATAL, "ERROR: --test-crypto option only works with --threads set to 1 or 2");
-	openvpn_thread_init ();
-	ALLOC_OBJ (child, struct context);
-	context_clear (child);
-	child->options = *options;
-	options_detach (&child->options);
-	child->first_time = false;
-	child_id = openvpn_thread_create (test_crypto_thread, (void *) child);
-      }
-  }
-#endif
   frame_finalize_options (c, options);
-
-#if defined(USE_PTHREAD)
-  if (options->n_threads == 2)
-    test_malloc ();
-#endif
 
   test_crypto (&c->c2.crypto_options, &c->c2.frame);
 
   key_schedule_free (&c->c1.ks, true);
   packet_id_free (&c->c2.packet_id);
 
-#if defined(USE_PTHREAD)
-  if (c->first_time && options->n_threads > 1)
-    openvpn_thread_join (child_id);
-  if (child)
-    free (child);
-#endif
   context_gc_free (c);
   return NULL;
 }

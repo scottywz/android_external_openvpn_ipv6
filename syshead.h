@@ -28,12 +28,12 @@
 /*
  * Only include if not during configure
  */
-#ifndef PACKAGE_NAME
-#ifdef _MSC_VER
-#include "config-win32.h"
-#else
-#include "config.h"
+#ifdef WIN32
+/* USE_PF_INET6: win32 ipv6 exists only after 0x0501 (XP) */
+#define WINVER 0x0501
 #endif
+#ifndef PACKAGE_NAME
+#include "config.h"
 #endif
 
 /* branch prediction hints */
@@ -51,6 +51,7 @@
 
 #ifdef WIN32
 #include <windows.h>
+#include <winsock2.h>
 #define sleep(x) Sleep((x)*1000)
 #define random rand
 #define srandom srand
@@ -85,6 +86,10 @@
 #endif
 
 #ifdef HAVE_SYS_SOCKET_H
+# if defined(TARGET_LINUX) && !defined(_GNU_SOURCE)
+   /* needed for peercred support on glibc-2.8 */
+#  define _GNU_SOURCE
+# endif
 #include <sys/socket.h>
 #endif
 
@@ -338,6 +343,9 @@
 #ifdef WIN32
 #include <iphlpapi.h>
 #include <wininet.h>
+/* The following two headers are needed of USE_PF_INET6 */
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #endif
 
 #ifdef HAVE_SYS_MMAN_H
@@ -536,24 +544,6 @@ socket_defined (const socket_descriptor_t sd)
 #define ENABLE_BUFFER_LIST
 
 /*
- * Do we have pthread capability?
- */
-#ifdef USE_PTHREAD
-#if defined(USE_CRYPTO) && defined(USE_SSL) && P2MP
-#include <pthread.h>
-#else
-#undef USE_PTHREAD
-#endif
-#endif
-
-/*
- * Pthread support is currently experimental (and quite unfinished).
- */
-#if 1 /* JYFIXME -- if defined, disable pthread */
-#undef USE_PTHREAD
-#endif
-
-/*
  * Should we include OCC (options consistency check) code?
  */
 #ifndef ENABLE_SMALL
@@ -661,8 +651,15 @@ socket_defined (const socket_descriptor_t sd)
 #endif
 
 /*
+ * Do we support challenge/response authentication, as a console-based client?
+ */
+#define ENABLE_CLIENT_CR
+
+/*
  * Do we support pushing peer info?
  */
+#if defined(USE_CRYPTO) && defined(USE_SSL)
 #define ENABLE_PUSH_PEER_INFO
+#endif
 
 #endif

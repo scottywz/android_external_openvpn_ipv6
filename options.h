@@ -95,6 +95,7 @@ struct connection_entry
 #ifdef ENABLE_SOCKS
   const char *socks_proxy_server;
   int socks_proxy_port;
+  const char *socks_proxy_authfile;
   bool socks_proxy_retry;
 #endif
 
@@ -204,6 +205,9 @@ struct options
   int topology; /* one of the TOP_x values from proto.h */
   const char *ifconfig_local;
   const char *ifconfig_remote_netmask;
+  const char *ifconfig_ipv6_local;
+  int         ifconfig_ipv6_netbits;
+  const char *ifconfig_ipv6_remote;
   bool ifconfig_noexec;
   bool ifconfig_nowarn;
 #ifdef HAVE_GETTIMEOFDAY
@@ -215,6 +219,8 @@ struct options
   int link_mtu;          /* MTU of device over which tunnel packets pass via TCP/UDP */
   bool tun_mtu_defined;  /* true if user overriding parm with command line option */
   bool link_mtu_defined; /* true if user overriding parm with command line option */
+
+  int proto_force;
 
   /* Advanced MTU negotiation and datagram fragmentation options */
   int mtu_discover_type; /* used if OS supports setting Path MTU discovery options on socket */
@@ -323,6 +329,7 @@ struct options
   bool route_delay_defined;
   int max_routes;
   struct route_option_list *routes;
+  struct route_ipv6_option_list *routes_ipv6;			/* IPv6 */
   bool route_nopull;
   bool route_gateway_via_dhcp;
   bool allow_pull_fqdn; /* as a client, allow server to push a FQDN for certain parameters */
@@ -352,10 +359,7 @@ struct options
   struct plugin_option_list *plugin_list;
 #endif
 
-#ifdef USE_PTHREAD
-  int n_threads;
-  int nice_work;
-#endif
+  const char *tmp_dir;
 
 #if P2MP
 
@@ -363,6 +367,9 @@ struct options
   bool server_defined;
   in_addr_t server_network;
   in_addr_t server_netmask;
+  bool server_ipv6_defined;				/* IPv6 */
+  struct in6_addr server_network_ipv6;			/* IPv6 */
+  unsigned int    server_netbits_ipv6;			/* IPv6 */
 
 # define SF_NOPOOL (1<<0)
 # define SF_TCP_NODELAY_HELPER (1<<1)
@@ -384,24 +391,33 @@ struct options
   in_addr_t ifconfig_pool_netmask;
   const char *ifconfig_pool_persist_filename;
   int ifconfig_pool_persist_refresh_freq;
+  
+  bool   ifconfig_ipv6_pool_defined;			/* IPv6 */
+  struct in6_addr ifconfig_ipv6_pool_base;		/* IPv6 */
+  int    ifconfig_ipv6_pool_netbits;			/* IPv6 */
+  
   int real_hash_size;
   int virtual_hash_size;
   const char *client_connect_script;
   const char *client_disconnect_script;
   const char *learn_address_script;
-  const char *tmp_dir;
   const char *client_config_dir;
   bool ccd_exclusive;
   bool disable;
   int n_bcast_buf;
   int tcp_queue_limit;
   struct iroute *iroutes;
+  struct iroute_ipv6 *iroutes_ipv6;			/* IPv6 */
   bool push_ifconfig_defined;
   in_addr_t push_ifconfig_local;
   in_addr_t push_ifconfig_remote_netmask;
   bool push_ifconfig_constraint_defined;
   in_addr_t push_ifconfig_constraint_network;
   in_addr_t push_ifconfig_constraint_netmask;
+  bool            push_ifconfig_ipv6_defined;		/* IPv6 */
+  struct in6_addr push_ifconfig_ipv6_local;		/* IPv6 */
+  int 		  push_ifconfig_ipv6_netbits;		/* IPv6 */
+  struct in6_addr push_ifconfig_ipv6_remote;		/* IPv6 */
   bool enable_c2c;
   bool duplicate_cn;
   int cf_max;
@@ -465,6 +481,7 @@ struct options
   const char *pkcs12_file;
   const char *cipher_list;
   const char *tls_verify;
+  const char *tls_export_cert;
   const char *tls_remote;
   const char *crl_file;
 
@@ -473,6 +490,7 @@ struct options
   const char *cert_file_inline;
   char *priv_key_file_inline;
   const char *dh_file_inline;
+  const char *pkcs12_file_inline; /* contains the base64 encoding of pkcs12 file */
 #endif
 
   int ns_cert_type; /* set to 0, NS_SSL_SERVER, or NS_SSL_CLIENT */
@@ -507,6 +525,11 @@ struct options
   /* Data channel key handshake must finalize
      within n seconds of handshake initiation. */
   int handshake_window;
+
+#ifdef ENABLE_X509ALTUSERNAME
+  /* Field used to be the username in X509 cert. */
+  char *x509_username_field;
+#endif
 
   /* Old key allowed to live n seconds after new key goes active */
   int transition_window;
@@ -716,6 +739,10 @@ void options_string_import (struct options *options,
 			    const unsigned int permission_mask,
 			    unsigned int *option_types_found,
 			    struct env_set *es);
+
+bool get_ipv6_addr( const char * prefix_str, struct in6_addr *network,
+		    unsigned int * netbits, char ** printable_ipv6, 
+		    int msglevel );
 
 /*
  * inline functions
